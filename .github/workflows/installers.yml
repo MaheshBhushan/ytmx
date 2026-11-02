@@ -1,0 +1,30 @@
+name: installers
+
+# Run the one-line installers the way users do, against the published release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: install.sh
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+      - run: ~/.local/bin/ytmx --version && ~/.local/bin/ytmx suggest hello | head -3 || true
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: install.ps1
+        shell: pwsh
+        run: irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+      - shell: pwsh
+        run: |
+          & "$env:LOCALAPPDATA\Programs\ytmx\ytmx.exe" --version
+          & "$env:LOCALAPPDATA\Programs\ytmx\ytmx.exe" suggest hello

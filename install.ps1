@@ -18,8 +18,10 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
     Write-Host "Downloading $asset..."
     Invoke-WebRequest "$base/$asset" -OutFile "$tmp\$asset" -UseBasicParsing
-    $want = (Invoke-WebRequest "$base/$asset.sha256" -UseBasicParsing).Content.ToString().Trim().ToLower()
     $got = (Get-FileHash "$tmp\$asset" -Algorithm SHA256).Hash.ToLower()
+    # Release assets are served as bytes, so read the checksum from a file rather than .Content.
+    Invoke-WebRequest "$base/$asset.sha256" -OutFile "$tmp\sum" -UseBasicParsing
+    $want = (Get-Content "$tmp\sum" -Raw).Trim().ToLower()
     if ($got -ne $want) { throw "checksum mismatch for $asset" }
 
     Expand-Archive "$tmp\$asset" -DestinationPath $tmp -Force
