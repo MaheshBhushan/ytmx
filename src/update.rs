@@ -178,7 +178,10 @@ pub async fn run(check_only: bool, to: Option<String>) -> Result<()> {
     .await;
     let _ = std::fs::remove_dir_all(&stage);
     result?;
-    println!("Updated ytmx {CURRENT} → {} at {}", tag.trim_start_matches('v'), exe.display());
+    // canonicalize() gives Windows' verbatim form (\\?\C:\…); show the usual one.
+    let shown = exe.display().to_string();
+    let shown = shown.strip_prefix(r"\\?\").unwrap_or(&shown);
+    println!("Updated ytmx {CURRENT} → {} at {shown}", tag.trim_start_matches('v'));
 
     // The background player is still the old binary; restart it on the new one.
     if let Some(mut c) = crate::ipc::Client::existing().await {
