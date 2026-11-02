@@ -51,14 +51,14 @@ jobs:
         run: |
           set -x
           B=target/release/ytmx
+          exe=""
           if [ "$RUNNER_OS" = Windows ]; then
-            d=/c/ProgramData/chocolatey/lib/mpvio.install/tools
-            ls "$d" | head -20
-            echo "$PATH" | tr ':' '\n' | grep -i choco || true
-            export PATH="$d:$PATH"
+            # Chocolatey's mpv dir also holds a folder named "mpv", which Git Bash
+            # resolves instead of mpv.exe; ytmx itself looks up mpv.exe.
+            exe=.exe
           fi
-          command -v mpv
-          mpv --version > mpv.txt; sed -n 1p mpv.txt
+          command -v mpv$exe
+          mpv$exe --version > mpv.txt; sed -n 1p mpv.txt
           yt-dlp --version
           $B --version
           $B status
