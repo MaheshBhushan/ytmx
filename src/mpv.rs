@@ -3,26 +3,27 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::net::unix::OwnedWriteHalf;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+type Conn = interprocess::local_socket::tokio::Stream;
+
 pub struct Mpv {
-    writer: Mutex<OwnedWriteHalf>,
+    writer: Mutex<WriteHalf<Conn>>,
     pending: Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
     next_id: AtomicU64,
     _child: tokio::process::Child,
 }
 
 impl Mpv {
-    /// Start an idle, video-less mpv and connect to it. Events go to `events`.
-    pub async fn spawn(socket: &Path, volume: f64, events: mpsc::UnboundedSender<Value>) -> Result<Arc<Mpv>> {
-        let _ = std::fs::remove_file(socket);
-        let child = tokio::process::Command::new("mpv")
+    /// Start an idle, video-less mpv and connect to it (a Unix socket, or a
+    /// named pipe on Windows). Events go to `events`.
+    pub async fn spawn(volume: f64, events: mpsc::UnboundedSender<Value>) -> Result<Arc<Mpv>> {
+        crate::paths::remove_socket("mpv");
+        let mut cmd = tokio::process::Command::new("mpv");
+        let child = crate::paths::no_window(&mut cmd)
             .args([
                 "--idle=yes",
                 "--no-video",
@@ -38,7 +39,7 @@ impl Mpv {
                 "--force-media-title=ytmx",
             ])
             .arg(format!("--volume={volume}"))
-            .arg(format!("--input-ipc-server={}", socket.display()))
+            .arg(format!("--input-ipc-server={}", crate::paths::mpv_ipc_arg()))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -47,14 +48,14 @@ impl Mpv {
             .context("starting mpv (is it installed and on PATH?)")?;
         let mut stream = None;
         for _ in 0..100 {
-            if let Ok(s) = UnixStream::connect(socket).await {
+            if let Ok(s) = crate::ipc::connect_local("mpv").await {
                 stream = Some(s);
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
         let stream = stream.ok_or_else(|| anyhow!("mpv did not open its IPC socket"))?;
-        let (r, w) = stream.into_split();
+        let (r, w) = tokio::io::split(stream);
         let pending: Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Value>>>> = Arc::default();
         let p2 = pending.clone();
         tokio::spawn(async move {

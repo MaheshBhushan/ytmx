@@ -6,17 +6,40 @@ Instead of hard-coding a command per feature, ytmx parses the same renderer JSON
 
 ## Install
 
-You need:
+One command; it detects your OS and CPU, downloads the matching build from the latest release and checks its SHA-256.
 
-- [`mpv`](https://mpv.io) on `PATH` (plays the audio)
-- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH` (resolves stream URLs): `uv tool install yt-dlp` or `pipx install yt-dlp`, or point `YTMX_YTDLP` at it
-- Rust 1.85+ to build
-- For sign-in: [omp](https://omp.sh) and its browser relay (recommended), or a browser whose cookie files ytmx can read
+**Linux and macOS**
 
 ```bash
-git clone https://github.com/MaheshBhushan/ytmx && cd ytmx
-cargo install --path .        # puts `ytmx` in ~/.cargo/bin
+curl -fsSL https://raw.githubusercontent.com/MaheshBhushan/ytmx/main/install.sh | sh
 ```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/MaheshBhushan/ytmx/main/install.ps1 | iex
+```
+
+Builds: Linux x86_64 and ARM64, macOS Apple Silicon and Intel, Windows x64 (ARM64 Windows runs it under emulation). It installs to `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\Programs\ytmx` (Windows, added to your PATH). `YTMX_VERSION=v0.2.0` pins a release, `YTMX_INSTALL_DIR` changes the location.
+
+ytmx also needs two programs, which the installer checks for:
+
+| | mpv (plays audio) | yt-dlp (resolves stream URLs) |
+|---|---|---|
+| macOS | `brew install mpv` | `brew install yt-dlp` |
+| Debian/Ubuntu | `sudo apt install mpv` | `pipx install yt-dlp` |
+| Arch | `sudo pacman -S mpv` | `sudo pacman -S yt-dlp` |
+| Windows | `scoop install mpv` | `scoop install yt-dlp` or `winget install yt-dlp.yt-dlp` |
+
+For sign-in you'll want [omp](https://omp.sh) and its browser relay (below).
+
+From source (Rust 1.85+): `cargo install --git https://github.com/MaheshBhushan/ytmx`.
+
+### Platform notes
+
+- **Volume** is the system output volume everywhere: PipeWire/PulseAudio on Linux, the system volume on macOS, the default playback device on Windows. `YTMX_MIXER=mpv` uses mpv's own volume instead.
+- **Windows**: Chrome 127+ encrypts cookies so other programs can't read them, so `ytmx login --browser chrome` usually fails there. Use the relay. The player runs in the background without a console window, talking over named pipes.
+- **macOS**: reading browser cookie files asks for Keychain access; the relay doesn't. Binaries aren't notarized; the install command avoids Gatekeeper prompts, a browser download doesn't.
 
 ## Sign in
 

@@ -4,9 +4,12 @@ use crate::model::Item;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use interprocess::local_socket::tokio::{Stream, prelude::*};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines, ReadHalf, WriteHalf};
+
+pub async fn connect_local(kind: &str) -> std::io::Result<Stream> {
+    Stream::connect(crate::paths::ipc_name(kind)?).await
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -102,14 +105,13 @@ pub enum Event {
 }
 
 pub struct Client {
-    lines: Lines<BufReader<OwnedReadHalf>>,
-    w: OwnedWriteHalf,
+    lines: Lines<BufReader<ReadHalf<Stream>>>,
+    w: WriteHalf<Stream>,
 }
 
 impl Client {
     pub async fn connect() -> Result<Client> {
-        let path = crate::paths::socket();
-        if let Ok(s) = UnixStream::connect(&path).await {
+        if let Ok(s) = connect_local("player").await {
             return Ok(Self::from(s));
         }
         // Start the daemon detached from this terminal.
@@ -117,14 +119,23 @@ impl Client {
         let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::paths::cache_dir().join("daemon.log"))?;
         let mut cmd = std::process::Command::new(exe);
         cmd.arg("daemon").stdin(std::process::Stdio::null()).stdout(log.try_clone()?).stderr(log);
+        #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // Survive the terminal closing, and never open a console window.
+            const DETACHED_PROCESS: u32 = 0x0000_0008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        }
         cmd.spawn().context("starting the ytmx daemon")?;
         for _ in 0..200 {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            if let Ok(s) = UnixStream::connect(&path).await {
+            if let Ok(s) = connect_local("player").await {
                 return Ok(Self::from(s));
             }
         }
@@ -133,11 +144,11 @@ impl Client {
 
     /// Connect only if a daemon is already running.
     pub async fn existing() -> Option<Client> {
-        UnixStream::connect(crate::paths::socket()).await.ok().map(Self::from)
+        connect_local("player").await.ok().map(Self::from)
     }
 
-    fn from(s: UnixStream) -> Client {
-        let (r, w) = s.into_split();
+    fn from(s: Stream) -> Client {
+        let (r, w) = tokio::io::split(s);
         Client { lines: BufReader::new(r).lines(), w }
     }
 

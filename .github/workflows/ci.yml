@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Clippy
+        run: cargo clippy --release --locked
+
+      # Install the runtime pieces and exercise the real cross-process path:
+      # the CLI starts the background player, which starts mpv and talks to it
+      # over a Unix socket (Linux/macOS) or named pipe (Windows).
+      - name: Install mpv and yt-dlp (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q mpv && pipx install yt-dlp
+      - name: Install mpv and yt-dlp (macOS)
+        if: runner.os == 'macOS'
+        run: brew install mpv yt-dlp
+      - name: Install mpv and yt-dlp (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install mpv -y --no-progress
+          pip install yt-dlp
+      - name: Smoke test
+        shell: bash
+        env:
+          YTMX_MIXER: mpv
+        run: |
+          set -x
+          B=target/release/ytmx
+          $B --version
+          $B status
+          $B volume 40            # spawns the daemon + mpv
+          $B status --json | tee status.json
+          grep -q '"volume": 40' status.json
+          $B suggest daft punk | head -5
+          $B quit
+          $B status | grep -q "Not running"
+      - name: Daemon log
+        if: failure()
+        shell: bash
+        run: |
+          for f in ~/.cache/ytmx/daemon.log ~/Library/Caches/ytmx/daemon.log "$LOCALAPPDATA/ytmx/daemon.log"; do [ -f "$f" ] && cat "$f"; done; true

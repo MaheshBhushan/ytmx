@@ -35,12 +35,12 @@ pub fn find_ytdlp() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("YTMX_YTDLP") {
         return Some(PathBuf::from(p));
     }
-    let path = std::env::var_os("PATH")?;
-    let mut cands: Vec<PathBuf> = std::env::split_paths(&path).map(|d| d.join("yt-dlp")).collect();
-    if let Some(h) = dirs::home_dir() {
-        cands.push(h.join(".local/bin/yt-dlp"));
-    }
-    cands.into_iter().find(|p| p.is_file())
+    crate::paths::find_on_path("yt-dlp").or_else(|| {
+        // Common user-level install spots that may be missing from PATH.
+        let h = dirs::home_dir()?;
+        let name = format!("yt-dlp{}", std::env::consts::EXE_SUFFIX);
+        [h.join(".local/bin").join(&name), h.join("scoop/shims").join(&name)].into_iter().find(|p| p.is_file())
+    })
 }
 
 /// Netscape cookie jar for yt-dlp, used only when a track needs sign-in.
@@ -106,6 +106,7 @@ impl Resolver {
 
     async fn run(&self, id: &str, with_cookies: bool) -> Result<Stream> {
         let mut cmd = tokio::process::Command::new(&self.ytdlp);
+        crate::paths::no_window(&mut cmd);
         cmd.args(["-f", "bestaudio[acodec=opus]/bestaudio/best", "--no-playlist", "--no-warnings", "-q", "--print", "%(url)s", "--print", "%(http_headers.User-Agent|)s"]);
         if with_cookies
             && let Some(c) = &self.cookies {

@@ -16,7 +16,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use interprocess::local_socket::tokio::{Stream as LocalConn, prelude::*};
+use interprocess::local_socket::ListenerOptions;
 use tokio::sync::{mpsc, oneshot, watch};
 
 type Reply = oneshot::Sender<Response>;
@@ -413,7 +414,7 @@ impl Player {
             },
             Some("mpv-exited") => {
                 eprintln!("mpv exited; stopping daemon");
-                let _ = std::fs::remove_file(crate::paths::socket());
+                crate::paths::remove_socket("player");
                 std::process::exit(1);
             }
             _ => {}
@@ -701,7 +702,7 @@ impl Player {
             Request::Quit => {
                 let _ = reply.send(Response { ok: true, message: Some("Stopped".into()), ..Default::default() });
                 let _ = self.mpv.cmd(json!(["quit"])).await;
-                let _ = std::fs::remove_file(crate::paths::socket());
+                crate::paths::remove_socket("player");
                 std::process::exit(0);
             }
         };
@@ -739,8 +740,8 @@ impl Player {
     }
 }
 
-async fn serve_conn(stream: UnixStream, req_tx: mpsc::UnboundedSender<(Request, Reply)>, mut state_rx: watch::Receiver<State>, mut queue_rx: watch::Receiver<(u64, Arc<Vec<Item>>)>) {
-    let (r, mut w) = stream.into_split();
+async fn serve_conn(stream: LocalConn, req_tx: mpsc::UnboundedSender<(Request, Reply)>, mut state_rx: watch::Receiver<State>, mut queue_rx: watch::Receiver<(u64, Arc<Vec<Item>>)>) {
+    let (r, mut w) = tokio::io::split(stream);
     let mut lines = BufReader::new(r).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let req: Request = match serde_json::from_str(&line) {
@@ -790,15 +791,16 @@ async fn serve_conn(stream: UnixStream, req_tx: mpsc::UnboundedSender<(Request, 
 }
 
 pub async fn run() -> Result<()> {
-    let sock = crate::paths::socket();
-    if UnixStream::connect(&sock).await.is_ok() {
-        anyhow::bail!("a ytmx daemon is already running at {}", sock.display());
+    if crate::ipc::connect_local("player").await.is_ok() {
+        anyhow::bail!("a ytmx daemon is already running");
     }
-    let _ = std::fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
+    // A socket file left by a crashed daemon (Unix) would block binding.
+    crate::paths::remove_socket("player");
+    let listener = ListenerOptions::new().name(crate::paths::ipc_name("player")?).create_tokio().context("opening the player socket")?;
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(crate::paths::socket_file("player"), std::fs::Permissions::from_mode(0o600));
     }
 
     let api = Api::new().await?;
@@ -816,7 +818,7 @@ pub async fn run() -> Result<()> {
     if let Some(m) = &mixer {
         m.watch(vol_tx);
     }
-    let mpv = Mpv::spawn(&crate::paths::mpv_socket(), if mixer.is_some() { 100.0 } else { persist.volume }, ev_tx).await?;
+    let mpv = Mpv::spawn(if mixer.is_some() { 100.0 } else { persist.volume }, ev_tx).await?;
     for (i, p) in ["path", "pause", "volume", "duration"].iter().enumerate() {
         mpv.observe(i as u64 + 1, p).await?;
     }
@@ -862,7 +864,7 @@ pub async fn run() -> Result<()> {
     p.publish();
 
     tokio::spawn(async move {
-        while let Ok((s, _)) = listener.accept().await {
+        while let Ok(s) = listener.accept().await {
             tokio::spawn(serve_conn(s, req_tx.clone(), state_rx.clone(), queue_rx.clone()));
         }
     });

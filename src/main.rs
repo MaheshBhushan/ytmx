@@ -209,6 +209,7 @@ pub enum PlaylistCmd {
 
 fn main() {
     // Behave like a normal Unix tool under `| head`: exit quietly on a closed pipe.
+    #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }

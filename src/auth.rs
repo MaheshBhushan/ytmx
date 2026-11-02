@@ -47,7 +47,13 @@ impl Session {
                     .into_iter()
                     .find(|p| p.exists())
                     .ok_or_else(|| anyhow::anyhow!("no cookie database in {}", dir.display()))?;
-                (rookie::any_browser(&db.to_string_lossy(), domains, None), label)
+                // The browser's own decryption: Linux keyring / macOS Keychain
+                // entry for that browser, or the Local State key on Windows.
+                #[cfg(unix)]
+                let res = rookie::chromium_based(rookie::config::get_browser_config(browser), db, domains);
+                #[cfg(windows)]
+                let res = rookie::chromium_based(root.join("Local State"), db, domains);
+                (res, label)
             }
         };
         let cookies = cookies.map_err(|e| anyhow::anyhow!("reading {browser} cookies: {e:#}"))?;
@@ -114,17 +120,47 @@ impl Session {
 }
 
 fn chromium_root(browser: &str) -> Result<PathBuf> {
-    let cfg = dirs::config_dir().ok_or_else(|| anyhow::anyhow!("no config dir"))?;
-    let rel = match browser {
-        "chrome" => "google-chrome",
-        "chromium" => "chromium",
-        "brave" => "BraveSoftware/Brave-Browser",
-        "edge" => "microsoft-edge",
-        "vivaldi" => "vivaldi",
-        "opera" => "opera",
-        other => bail!("unsupported browser {other:?} (chrome, chromium, brave, edge, vivaldi, opera, firefox, librewolf)"),
-    };
-    let root = cfg.join(rel);
+    let unsupported = || anyhow::anyhow!("unsupported browser {browser:?} (chrome, chromium, brave, edge, vivaldi, firefox, librewolf; opera on Linux)");
+    #[cfg(target_os = "linux")]
+    let (base, rel) = (
+        dirs::config_dir(),
+        match browser {
+            "chrome" => "google-chrome",
+            "chromium" => "chromium",
+            "brave" => "BraveSoftware/Brave-Browser",
+            "edge" => "microsoft-edge",
+            "vivaldi" => "vivaldi",
+            "opera" => "opera",
+            _ => return Err(unsupported()),
+        },
+    );
+    // ~/Library/Application Support/…
+    #[cfg(target_os = "macos")]
+    let (base, rel) = (
+        dirs::config_dir(),
+        match browser {
+            "chrome" => "Google/Chrome",
+            "chromium" => "Chromium",
+            "brave" => "BraveSoftware/Brave-Browser",
+            "edge" => "Microsoft Edge",
+            "vivaldi" => "Vivaldi",
+            _ => return Err(unsupported()),
+        },
+    );
+    // %LOCALAPPDATA%\…\User Data
+    #[cfg(windows)]
+    let (base, rel) = (
+        dirs::data_local_dir(),
+        match browser {
+            "chrome" => r"Google\Chrome\User Data",
+            "chromium" => r"Chromium\User Data",
+            "brave" => r"BraveSoftware\Brave-Browser\User Data",
+            "edge" => r"Microsoft\Edge\User Data",
+            "vivaldi" => r"Vivaldi\User Data",
+            _ => return Err(unsupported()),
+        },
+    );
+    let root = base.ok_or_else(|| anyhow::anyhow!("no application data directory"))?.join(rel);
     if !root.exists() {
         bail!("{browser} profile directory {} not found", root.display());
     }
