@@ -35,9 +35,14 @@ jobs:
         run: brew install mpv yt-dlp
       - name: Install mpv and yt-dlp (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           choco install mpv -y --no-progress
           pip install yt-dlp
+          # The Chocolatey package unpacks mpv without putting it on PATH.
+          $exe = Get-ChildItem C:\ProgramData\chocolatey\lib -Recurse -Filter mpv.exe | Select-Object -First 1
+          if (-not $exe) { throw "mpv.exe not found after install" }
+          $exe.DirectoryName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Smoke test
         shell: bash
         env:
@@ -45,14 +50,14 @@ jobs:
         run: |
           set -x
           B=target/release/ytmx
-          mpv --version | head -1
+          mpv --version > mpv.txt; sed -n 1p mpv.txt
           yt-dlp --version
           $B --version
           $B status
           $B volume 40            # spawns the daemon + mpv
           $B status --json | tee status.json
           grep -q '"volume": 40' status.json
-          $B suggest daft punk | head -5
+          $B suggest daft punk > sugg.txt; cat sugg.txt; grep -qi "daft punk" sugg.txt
           $B quit
           $B status | grep -q "Not running"
       - name: Daemon log

@@ -114,6 +114,13 @@ impl Client {
         if let Ok(s) = connect_local("player").await {
             return Ok(Self::from(s));
         }
+        // Fail with the real reason instead of a player that dies on start.
+        if crate::paths::find_on_path("mpv").is_none() {
+            bail!("mpv is not installed or not on PATH (macOS: brew install mpv; Windows: scoop install mpv; Linux: your package manager)");
+        }
+        if crate::resolve::find_ytdlp().is_none() {
+            bail!("yt-dlp is not installed or not on PATH (pipx install yt-dlp, brew install yt-dlp, or scoop install yt-dlp), or set YTMX_YTDLP");
+        }
         // Start the daemon detached from this terminal.
         let exe = std::env::current_exe()?;
         let log = std::fs::OpenOptions::new().create(true).append(true).open(crate::paths::cache_dir().join("daemon.log"))?;
