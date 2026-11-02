@@ -17,6 +17,15 @@ jobs:
       - name: install.sh
         run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
       - run: ~/.local/bin/ytmx --version && ~/.local/bin/ytmx suggest hello | head -3 || true
+      # macOS /bin/sh is bash 3.2, which in single-byte locales reads high bytes
+      # as name characters ("$asset…" became the unbound variable "asset\xe2").
+      - name: install.sh under bash 3.2 + Latin-1 locale
+        if: runner.os == 'macOS'
+        run: |
+          /bin/sh --version | head -1
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh -o install.sh
+          LC_ALL=en_US.ISO8859-1 LANG=en_US.ISO8859-1 YTMX_INSTALL_DIR="$RUNNER_TEMP/latin1" /bin/sh install.sh
+          "$RUNNER_TEMP/latin1/ytmx" --version
 
   windows:
     runs-on: windows-latest
