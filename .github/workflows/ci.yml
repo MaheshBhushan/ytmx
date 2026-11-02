@@ -39,10 +39,11 @@ jobs:
         run: |
           choco install mpv -y --no-progress
           pip install yt-dlp
-          # The Chocolatey package unpacks mpv without putting it on PATH.
-          $exe = Get-ChildItem C:\ProgramData\chocolatey\lib -Recurse -Filter mpv.exe | Select-Object -First 1
-          if (-not $exe) { throw "mpv.exe not found after install" }
-          $exe.DirectoryName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          # The Chocolatey package unpacks mpv here without fixing PATH for later steps.
+          $dir = 'C:\ProgramData\chocolatey\lib\mpvio.install\tools'
+          if (-not (Test-Path "$dir\mpv.exe")) { Get-ChildItem C:\ProgramData\chocolatey\lib -Recurse -Filter mpv.* | Select-Object FullName; throw "mpv.exe not in $dir" }
+          Write-Host "mpv: $dir\mpv.exe"
+          $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Smoke test
         shell: bash
         env:
