@@ -45,6 +45,8 @@ jobs:
         run: |
           set -x
           B=target/release/ytmx
+          mpv --version | head -1
+          yt-dlp --version
           $B --version
           $B status
           $B volume 40            # spawns the daemon + mpv
@@ -57,4 +59,5 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          for f in ~/.cache/ytmx/daemon.log ~/Library/Caches/ytmx/daemon.log "$LOCALAPPDATA/ytmx/daemon.log"; do [ -f "$f" ] && cat "$f"; done; true
+          if [ "$RUNNER_OS" = Windows ]; then base="$(cygpath "$LOCALAPPDATA")"; else base=~/.cache; [ "$RUNNER_OS" = macOS ] && base=~/Library/Caches; fi
+          cat "$base/ytmx/daemon.log" || echo "no daemon log at $base/ytmx"

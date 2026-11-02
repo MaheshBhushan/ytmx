@@ -160,7 +160,9 @@ impl Client {
     }
 
     pub async fn recv_line(&mut self) -> Result<String> {
-        self.lines.next_line().await?.ok_or_else(|| anyhow!("daemon closed the connection"))
+        self.lines.next_line().await?.ok_or_else(|| {
+            anyhow!("the ytmx player stopped unexpectedly; see {}", crate::paths::cache_dir().join("daemon.log").display())
+        })
     }
 
     pub async fn request(&mut self, req: &Request) -> Result<Response> {

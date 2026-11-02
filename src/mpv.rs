@@ -47,7 +47,8 @@ impl Mpv {
             .spawn()
             .context("starting mpv (is it installed and on PATH?)")?;
         let mut stream = None;
-        for _ in 0..100 {
+        // A cold mpv start (first run, antivirus scan, launcher shims) can take seconds.
+        for _ in 0..500 {
             if let Ok(s) = crate::ipc::connect_local("mpv").await {
                 stream = Some(s);
                 break;
