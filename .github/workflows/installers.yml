@@ -17,6 +17,12 @@ jobs:
       - name: install.sh
         run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
       - run: ~/.local/bin/ytmx --version && ~/.local/bin/ytmx suggest hello | head -3 || true
+      # Self-update in place: check, then roll back to a known release and verify.
+      - name: ytmx update
+        run: |
+          ~/.local/bin/ytmx update --check
+          ~/.local/bin/ytmx update --to v0.3.0
+          ~/.local/bin/ytmx --version | grep -q "ytmx 0.3.0"
       # macOS /bin/sh is bash 3.2, which in single-byte locales reads high bytes
       # as name characters ("$asset…" became the unbound variable "asset\xe2").
       - name: install.sh under bash 3.2 + Latin-1 locale
@@ -37,3 +43,13 @@ jobs:
         run: |
           & "$env:LOCALAPPDATA\Programs\ytmx\ytmx.exe" --version
           & "$env:LOCALAPPDATA\Programs\ytmx\ytmx.exe" suggest hello
+      # The running .exe is renamed aside and the zip unpacked with Windows' tar.
+      - name: ytmx update
+        shell: pwsh
+        run: |
+          $y = "$env:LOCALAPPDATA\Programs\ytmx\ytmx.exe"
+          & $y update --check
+          & $y update --to v0.3.0
+          if ($LASTEXITCODE -ne 0) { throw "update failed" }
+          $v = & $y --version
+          if ($v -ne "ytmx 0.3.0") { throw "expected ytmx 0.3.0, got $v" }

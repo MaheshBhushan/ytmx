@@ -35,6 +35,8 @@ enum Msg {
     More { view: u64, section: Option<usize>, res: Result<Cont, String> },
     Suggest { seq: u64, items: Vec<Item> },
     Lyrics { vid: String, lyrics: exec::Lyrics },
+    /// One-off message for the status line (e.g. an update is available).
+    Notice(String),
     Player(Event),
     Reply(Result<Response, String>),
 }
@@ -1150,6 +1152,7 @@ impl App {
                     self.suggestions = items;
                 }
             }
+            Msg::Notice(t) => self.say(t),
             Msg::Lyrics { vid, lyrics } => {
                 if self.lyrics.as_ref().is_some_and(|(v, _)| *v == vid) {
                     self.lyrics = Some((vid, Some(lyrics)));
@@ -1717,6 +1720,15 @@ pub async fn run() -> Result<()> {
         app.say("Not signed in: run `ytmx login` for your library, likes and playlists");
     }
     app.open_nav(0);
+    {
+        // At most one GitHub request a day; silent when offline.
+        let tx = app.tx.clone();
+        tokio::spawn(async move {
+            if let Some(tag) = crate::update::notice().await {
+                let _ = tx.send(Msg::Notice(format!("ytmx {} is available (you have {}): run `ytmx update`", tag.trim_start_matches('v'), crate::update::CURRENT)));
+            }
+        });
+    }
 
     let mut events = EventStream::new();
     // Redraw at ~30 fps while something changes or music plays; idle otherwise.

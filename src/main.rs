@@ -11,6 +11,7 @@ mod resolve;
 mod sysvol;
 mod relay;
 mod tui;
+mod update;
 
 use clap::{Parser, Subcommand};
 
@@ -176,6 +177,15 @@ pub enum Cmd {
     Raw { endpoint: String, body: Option<String> },
     /// Stop playback and the background player.
     Quit,
+    /// Update ytmx to the latest release (or `--to v0.3.0` for a specific one).
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+        /// Install this release instead of the latest (also rolls back).
+        #[arg(long, value_name = "VERSION")]
+        to: Option<String>,
+    },
     #[command(hide = true)]
     Daemon,
 }
@@ -220,11 +230,13 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
     let cli = Cli::parse();
+    update::cleanup_old();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
     let res = rt.block_on(async move {
         match cli.cmd {
             None => tui::run().await,
             Some(Cmd::Daemon) => daemon::run().await,
+            Some(Cmd::Update { check, to }) => update::run(check, to).await,
             Some(cmd) => cli::run(cmd, cli.json).await,
         }
     });

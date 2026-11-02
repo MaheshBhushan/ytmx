@@ -35,6 +35,16 @@ For sign-in you'll want [omp](https://omp.sh) and its browser relay (below).
 
 From source (Rust 1.85+): `cargo install --git https://github.com/MaheshBhushan/ytmx`.
 
+### Updating
+
+```bash
+ytmx update            # latest release: downloads, checks the SHA-256, replaces the binary
+ytmx update --check    # only report whether there's a newer release
+ytmx update --to v0.3.0   # install a specific release (also rolls back)
+```
+
+The TUI mentions a new release at most once a day (`YTMX_NO_UPDATE_CHECK=1` turns that off). Installs from a package manager or `cargo install` should be updated the same way they were installed; `ytmx update` says so instead of touching them.
+
 ### Platform notes
 
 - **Volume** is the system output volume everywhere: PipeWire/PulseAudio on Linux, the system volume on macOS, the default playback device on Windows. `YTMX_MIXER=mpv` uses mpv's own volume instead.
@@ -153,6 +163,7 @@ ytmx playlist delete <ref> --yes
 
 ytmx raw browse '{"browseId":"FEmusic_home"}'   # any InnerTube call, JSON out
 ytmx quit                                       # stop the background player
+ytmx update [--check] [--to vX.Y.Z]            # self-update from GitHub releases
 ```
 
 Add `--json` to any command for machine-readable output.
