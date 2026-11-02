@@ -69,6 +69,9 @@ struct Player {
     position: f64,
     duration: f64,
     volume: f64,
+    muted: bool,
+    /// The desktop mixer; when present `volume` is the system output volume.
+    mixer: Option<crate::sysvol::Mixer>,
     repeat: Repeat,
     autoplay: bool,
     radio_cont: Option<String>,
@@ -130,6 +133,8 @@ impl Player {
             position: self.position,
             duration: self.duration,
             volume: self.volume,
+            muted: self.muted,
+            system_volume: self.mixer.is_some(),
             repeat: self.repeat,
             autoplay: self.autoplay,
             error: self.error.clone(),
@@ -151,7 +156,12 @@ impl Player {
     }
 
     fn save(&self) {
-        let p = Persist { volume: self.volume, repeat: self.repeat, autoplay: self.autoplay };
+        // The stored volume is mpv's; with a system mixer keep whatever was stored.
+        let volume = match self.mixer {
+            Some(_) => std::fs::read(persist_path()).ok().and_then(|b| serde_json::from_slice::<Persist>(&b).ok()).map(|p| p.volume).unwrap_or(70.0),
+            None => self.volume,
+        };
+        let p = Persist { volume, repeat: self.repeat, autoplay: self.autoplay };
         let _ = std::fs::write(persist_path(), serde_json::to_vec(&p).unwrap_or_default());
     }
 
@@ -376,7 +386,8 @@ impl Player {
                         }
                     }
                     Some("pause") => self.paused = d.as_bool().unwrap_or(false),
-                    Some("volume") => self.volume = d.as_f64().unwrap_or(self.volume),
+                    // With a system mixer mpv stays at 100; its volume isn't the one shown.
+                    Some("volume") if self.mixer.is_none() => self.volume = d.as_f64().unwrap_or(self.volume),
                     Some("duration") => self.duration = d.as_f64().unwrap_or(0.0),
                     _ => return,
                 }
@@ -544,10 +555,37 @@ impl Player {
                 }
             }
             Request::Volume { value, relative } => {
-                let v = if relative { self.volume + value } else { value }.clamp(0.0, 130.0);
-                let _ = self.mpv.set("volume", json!(v)).await;
-                self.volume = v;
-                self.save();
+                match self.mixer.clone() {
+                    Some(m) => {
+                        let v = if relative { self.volume + value } else { value };
+                        if let Some(l) = m.set(v).await {
+                            self.volume = l.volume;
+                            self.muted = l.muted;
+                        }
+                    }
+                    None => {
+                        let v = if relative { self.volume + value } else { value }.clamp(0.0, 130.0);
+                        let _ = self.mpv.set("volume", json!(v)).await;
+                        self.volume = v;
+                        self.save();
+                    }
+                }
+                self.publish();
+                self.ok()
+            }
+            Request::Mute => {
+                match self.mixer.clone() {
+                    Some(m) => {
+                        if let Some(l) = m.toggle_mute().await {
+                            self.volume = l.volume;
+                            self.muted = l.muted;
+                        }
+                    }
+                    None => {
+                        self.muted = !self.muted;
+                        let _ = self.mpv.set("mute", json!(self.muted)).await;
+                    }
+                }
                 self.publish();
                 self.ok()
             }
@@ -767,7 +805,18 @@ pub async fn run() -> Result<()> {
     let res = Resolver::new(api.session.as_ref())?;
     let persist: Persist = std::fs::read(persist_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let (ev_tx, mut ev_rx) = mpsc::unbounded_channel();
-    let mpv = Mpv::spawn(&crate::paths::mpv_socket(), persist.volume, ev_tx).await?;
+    // Volume is the desktop's when a mixer answers; mpv then stays at 100 so
+    // nothing attenuates twice. Otherwise mpv's own volume, remembered here.
+    let mixer = crate::sysvol::Mixer::detect().await;
+    let start_level = match &mixer {
+        Some(m) => m.get().await,
+        None => None,
+    };
+    let (vol_tx, mut vol_rx) = mpsc::unbounded_channel();
+    if let Some(m) = &mixer {
+        m.watch(vol_tx);
+    }
+    let mpv = Mpv::spawn(&crate::paths::mpv_socket(), if mixer.is_some() { 100.0 } else { persist.volume }, ev_tx).await?;
     for (i, p) in ["path", "pause", "volume", "duration"].iter().enumerate() {
         mpv.observe(i as u64 + 1, p).await?;
     }
@@ -792,7 +841,9 @@ pub async fn run() -> Result<()> {
         loading: false,
         position: 0.0,
         duration: 0.0,
-        volume: persist.volume,
+        volume: start_level.map(|l| l.volume).unwrap_or(persist.volume),
+        muted: start_level.is_some_and(|l| l.muted),
+        mixer,
         repeat: persist.repeat,
         autoplay: persist.autoplay,
         radio_cont: None,
@@ -822,6 +873,11 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             Some((req, reply)) = req_rx.recv() => { p.handle(req, reply).await; }
             Some(ev) = ev_rx.recv() => p.on_mpv(ev).await,
+            Some(l) = vol_rx.recv() => {
+                p.volume = l.volume;
+                p.muted = l.muted;
+                p.publish();
+            }
             Some(m) = int_rx.recv() => match m {
                 Internal::Resolved { epoch, video_id, res } => p.on_resolved(epoch, video_id, res).await,
                 Internal::Prefetched { pepoch, video_id, res } => p.on_prefetched(pepoch, video_id, res).await,

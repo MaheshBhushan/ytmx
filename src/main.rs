@@ -8,6 +8,7 @@ mod model;
 mod mpv;
 mod paths;
 mod resolve;
+mod sysvol;
 mod relay;
 mod tui;
 
@@ -130,6 +131,8 @@ pub enum Cmd {
     Pause,
     Resume,
     Toggle,
+    /// Mute / unmute the output.
+    Mute,
     Next,
     Prev,
     Stop,

@@ -152,10 +152,10 @@ fn print_state(s: &State, json_out: bool) {
             let icon = if s.loading { "…" } else if s.paused { "⏸" } else { "▶" };
             println!("{icon} {}  {}", st.bold(&c.title), st.dim(&c.subtitle));
             println!(
-                "  {} / {}   vol {:.0}   repeat {:?}   autoplay {}   track {}/{}",
+                "  {} / {}   {}   repeat {:?}   autoplay {}   track {}/{}",
                 fmt_time(s.position),
                 fmt_time(s.duration),
-                s.volume,
+                if s.muted { "muted".to_string() } else { format!("vol {:.0}{}", s.volume, if s.system_volume { " (system)" } else { "" }) },
                 s.repeat,
                 if s.autoplay { "on" } else { "off" },
                 s.index.map(|i| i + 1).unwrap_or(0),
@@ -495,6 +495,7 @@ pub async fn run(cmd: Cmd, json_out: bool) -> Result<()> {
         Cmd::Pause => return ctl(Request::Pause).await,
         Cmd::Resume => return ctl(Request::Resume).await,
         Cmd::Toggle => return ctl(Request::Toggle).await,
+        Cmd::Mute => return send(Request::Mute, true, json_out).await,
         Cmd::Next => return ctl(Request::Next).await,
         Cmd::Prev => return ctl(Request::Prev).await,
         Cmd::Stop => return ctl(Request::Stop).await,

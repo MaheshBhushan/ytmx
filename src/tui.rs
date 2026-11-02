@@ -760,6 +760,7 @@ impl App {
             KeyCode::Right => self.send(Request::Seek { seconds: if shift { 30.0 } else { 5.0 }, relative: true }),
             KeyCode::Char('+') | KeyCode::Char('=') => self.send(Request::Volume { value: 5.0, relative: true }),
             KeyCode::Char('-') => self.send(Request::Volume { value: -5.0, relative: true }),
+            KeyCode::Char('0') => self.send(Request::Mute),
             KeyCode::Char('r') => self.send(Request::Repeat { mode: None }),
             KeyCode::Char('z') => self.send(Request::Shuffle),
             KeyCode::Char('o') => self.send(Request::Autoplay { on: None }),
@@ -1331,10 +1332,11 @@ impl App {
         } else {
             "▶"
         };
+        // "🔊 50" is the desktop's output volume when ytmx drives the system mixer.
+        let vol = if s.muted { "muted".to_string() } else { format!("{} {:.0}", if s.system_volume { "🔊" } else { "vol" }, s.volume) };
         let right = format!(
-            "{}vol {:.0}  {}  {}",
+            "{}{vol}  {}  {}",
             if liked { "♥  " } else { "♡  " },
-            s.volume,
             match s.repeat {
                 Repeat::Off => "repeat off",
                 Repeat::All => "repeat all",
@@ -1367,7 +1369,7 @@ impl App {
         let hint = match &self.toast {
             Some((t, at)) if at.elapsed() < Duration::from_secs(4) => Span::styled(trunc(t, w), Style::default().fg(Color::Yellow)),
             _ => Span::styled(
-                trunc("space play/pause  n/p next/prev  ←/→ seek  +/- vol  l like  a/A queue/next  S save  m menu  . page  Tab focus  q quit", w),
+                trunc("space play/pause  n/p next/prev  ←/→ seek  +/- vol  0 mute  l like  a/A queue/next  S save  m menu  . page  Tab focus  q quit", w),
                 Style::default().fg(DIM),
             ),
         };
@@ -1500,7 +1502,8 @@ const HELP: &[(&str, &str)] = &[
     ("space", "play / pause"),
     ("n p", "next / previous"),
     ("← → (⇧)", "seek 5 s (30 s)"),
-    ("+ -", "volume"),
+    ("+ -", "volume (the system output volume: same as the tray and media keys)"),
+    ("0", "mute / unmute"),
     ("l", "like / unlike what's playing"),
     ("r", "repeat off → all → one"),
     ("z", "shuffle the upcoming queue"),

@@ -32,6 +32,8 @@ pub enum Request {
     Next,
     Prev,
     Seek { seconds: f64, relative: bool },
+    /// Toggle mute (the system output's when ytmx drives the system volume).
+    Mute,
     Volume { value: f64, relative: bool },
     Jump { index: usize },
     Remove { index: usize },
@@ -62,6 +64,11 @@ pub struct State {
     pub position: f64,
     pub duration: f64,
     pub volume: f64,
+    #[serde(default)]
+    pub muted: bool,
+    /// `volume` is the desktop's output volume (tray, media keys) rather than mpv's.
+    #[serde(default)]
+    pub system_volume: bool,
     pub repeat: Repeat,
     pub autoplay: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

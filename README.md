@@ -77,7 +77,7 @@ Run `ytmx` with no arguments.
 | `R` | Refresh |
 | `space` `n` `p` | Play/pause, next, previous |
 | `←` `→` (`⇧`) | Seek 5 s (30 s); click the progress bar to seek |
-| `+` `-` | Volume |
+| `+` `-` / `0` | Volume / mute. This is the system output volume (PipeWire/PulseAudio), so it matches the tray and media keys, and changes made there show up in ytmx immediately |
 | `r` `z` `o` | Repeat off/all/one, shuffle upcoming, autoplay on/off |
 | `v` | Side pane: queue / lyrics |
 | `Tab` | Focus the side pane; in the queue `Enter` jumps, `d` removes, `J`/`K` move, `C` clears |
@@ -118,7 +118,7 @@ ytmx subscribe|unsubscribe <artist ref>
 ytmx status | queue
 ytmx pause | resume | toggle | next | prev | stop | clear | shuffle
 ytmx seek 30 | seek -10 | seek --to 1:30
-ytmx volume 60 | volume +5
+ytmx volume 60 | volume +5 | mute     # the system output volume; YTMX_MIXER=mpv uses mpv's own instead
 ytmx repeat [off|all|one] | autoplay [on|off]
 ytmx jump 7 | remove 7 | move 7 2
 
