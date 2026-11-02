@@ -34,7 +34,7 @@ enum Msg {
     Outcome { res: Result<Outcome, String>, ctx: Option<Item>, toggled: Option<(u64, usize, usize)> },
     More { view: u64, section: Option<usize>, res: Result<Cont, String> },
     Suggest { seq: u64, items: Vec<Item> },
-    Lyrics { vid: String, text: Option<String> },
+    Lyrics { vid: String, lyrics: exec::Lyrics },
     Player(Event),
     Reply(Result<Response, String>),
 }
@@ -147,13 +147,59 @@ impl View {
     }
 }
 
+/// Display width as terminals advance the cursor: per code point (wcwidth).
+/// `unicode-width`'s string width treats some Indic conjuncts as narrower
+/// than terminals draw them.
+fn cw(s: &str) -> usize {
+    s.chars().map(|c| c.width().unwrap_or(0)).sum()
+}
+
+/// Rows drawn one code point per cell with per-character widths, combining
+/// marks folded into the preceding cell. This keeps ratatui's idea of where
+/// text ends identical to the terminal's for Devanagari, Telugu, Tamil…,
+/// which grapheme-based layout does not (text overflowed and left stray
+/// vowel signs on other rows).
+struct CharLines(Vec<Vec<(String, Style)>>);
+
+impl ratatui::widgets::Widget for CharLines {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        for (row, spans) in self.0.into_iter().enumerate().take(area.height as usize) {
+            let y = area.y + row as u16;
+            let right = area.x + area.width;
+            let mut x = area.x;
+            'line: for (text, style) in spans {
+                for c in text.chars() {
+                    let w = c.width().unwrap_or(0) as u16;
+                    if w == 0 {
+                        if x > area.x {
+                            let cell = &mut buf[(x - 1, y)];
+                            let sym = format!("{}{c}", cell.symbol());
+                            cell.set_symbol(&sym);
+                        }
+                        continue;
+                    }
+                    if x + w > right {
+                        break 'line;
+                    }
+                    let mut tmp = [0u8; 4];
+                    buf[(x, y)].set_symbol(c.encode_utf8(&mut tmp)).set_style(style);
+                    for extra in 1..w {
+                        buf[(x + extra, y)].reset();
+                    }
+                    x += w;
+                }
+            }
+        }
+    }
+}
+
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(10);
     let mut out = Vec::new();
     for para in text.lines() {
         let mut line = String::new();
         for word in para.split(' ') {
-            if line.width() + word.width() + 1 > width && !line.is_empty() {
+            if cw(&line) + cw(word) + 1 > width && !line.is_empty() {
                 out.push(std::mem::take(&mut line));
             }
             if !line.is_empty() {
@@ -256,8 +302,12 @@ struct App {
     queue: Vec<Item>,
     qcursor: usize,
     qscroll: usize,
-    lyrics: Option<(String, Option<String>)>,
+    /// (video id, lyrics once loaded).
+    lyrics: Option<(String, Option<exec::Lyrics>)>,
+    /// Manual scroll offset; None follows playback.
     lyrics_scroll: Option<usize>,
+    /// Screen row → timed line index, from the last draw (click to seek).
+    lyric_rows: Vec<(u16, usize)>,
     input: Option<Input>,
     suggestions: Vec<Item>,
     scursor: Option<usize>,
@@ -701,8 +751,8 @@ impl App {
         self.lyrics_scroll = None;
         let (api, tx) = (self.api.clone(), self.tx.clone());
         tokio::spawn(async move {
-            let text = exec::lyrics(&api, &v).await.ok().flatten();
-            let _ = tx.send(Msg::Lyrics { vid: v, text: Some(text.unwrap_or_else(|| "No lyrics for this track.".into())) });
+            let lyrics = exec::lyrics(&api, &v).await.ok().flatten().unwrap_or_else(|| exec::Lyrics { text: "No lyrics for this track.".into(), ..Default::default() });
+            let _ = tx.send(Msg::Lyrics { vid: v, lyrics });
         });
     }
 
@@ -989,6 +1039,14 @@ impl App {
                     let w = self.bar_area.width.saturating_sub(16).max(1);
                     let frac = (m.column.saturating_sub(x0) as f64 / w as f64).clamp(0.0, 1.0);
                     self.send(Request::Seek { seconds: frac * self.state.duration, relative: false });
+                } else if inside(self.side_area) && self.side == Side::Lyrics {
+                    // Click a synced line to jump there and follow again.
+                    let target = self.lyric_rows.iter().find(|(y, _)| *y == m.row).map(|(_, i)| *i);
+                    let start = target.and_then(|i| self.lyrics.as_ref()?.1.as_ref()?.lines.get(i).map(|l| l.start_ms));
+                    if let Some(ms) = start {
+                        self.send(Request::Seek { seconds: ms as f64 / 1000.0, relative: false });
+                        self.lyrics_scroll = None;
+                    }
                 } else if inside(self.side_area) && self.side == Side::Queue {
                     self.focus = Focus::Side;
                     let i = self.qscroll + m.row.saturating_sub(self.side_area.y + 1) as usize;
@@ -1092,9 +1150,9 @@ impl App {
                     self.suggestions = items;
                 }
             }
-            Msg::Lyrics { vid, text } => {
+            Msg::Lyrics { vid, lyrics } => {
                 if self.lyrics.as_ref().is_some_and(|(v, _)| *v == vid) {
-                    self.lyrics = Some((vid, text));
+                    self.lyrics = Some((vid, Some(lyrics)));
                 }
             }
             Msg::Player(Event::State(s)) => {
@@ -1245,7 +1303,10 @@ impl App {
         let focused = self.focus == Focus::Side;
         let title = match self.side {
             Side::Queue => format!(" Queue {}/{} ", self.state.index.map(|i| i + 1).unwrap_or(0), self.queue.len()),
-            Side::Lyrics => " Lyrics ".to_string(),
+            Side::Lyrics => match self.lyrics.as_ref().and_then(|(_, l)| l.as_ref()) {
+                Some(l) if !l.lines.is_empty() => format!(" Lyrics · synced{} ", if self.lyrics_scroll.is_some() { " · f to follow" } else { "" }),
+                _ => " Lyrics ".to_string(),
+            },
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1298,17 +1359,62 @@ impl App {
                 f.render_widget(Paragraph::new(lines), inner);
             }
             Side::Lyrics => {
-                let text = match &self.lyrics {
-                    Some((_, Some(t))) => t.clone(),
-                    Some((_, None)) => "Loading lyrics…".into(),
-                    None => "Play something to see its lyrics.".into(),
+                self.lyric_rows.clear();
+                let loaded = self.lyrics.as_ref().and_then(|(_, l)| l.as_ref());
+                let Some(ly) = loaded.filter(|l| !l.lines.is_empty()) else {
+                    let text = match &self.lyrics {
+                        Some((_, Some(l))) => l.text.clone(),
+                        Some((_, None)) => "Loading lyrics…".into(),
+                        None => "Play something to see its lyrics.".into(),
+                    };
+                    let lines = wrap(&text, w.saturating_sub(1));
+                    let max = lines.len().saturating_sub(h);
+                    // Plain lyrics have no timing: follow playback proportionally.
+                    let scroll = self.lyrics_scroll.unwrap_or_else(|| if self.state.duration > 0.0 { ((self.position() / self.state.duration) * max as f64) as usize } else { 0 }).min(max);
+                    let out = lines.into_iter().skip(scroll).take(h).map(|l| vec![(l, Style::default())]).collect();
+                    f.render_widget(CharLines(out), inner);
+                    return;
                 };
-                let lines = wrap(&text, w.saturating_sub(1));
-                let max = lines.len().saturating_sub(h);
-                // No timestamps from the web client: follow playback proportionally.
-                let scroll = self.lyrics_scroll.unwrap_or_else(|| if self.state.duration > 0.0 { ((self.position() / self.state.duration) * max as f64) as usize } else { 0 }).min(max);
-                let out: Vec<Line> = lines.into_iter().skip(scroll).take(h).map(Line::raw).collect();
-                f.render_widget(Paragraph::new(out), inner);
+                // Synced: wrap each line, remembering which lyric each row belongs to.
+                let ms = (self.position() * 1000.0) as u64;
+                let cur = ly.current(ms);
+                let mut rows: Vec<(usize, String)> = Vec::new();
+                let mut first_row = Vec::with_capacity(ly.lines.len());
+                for (i, l) in ly.lines.iter().enumerate() {
+                    first_row.push(rows.len());
+                    let text = if l.text.trim().is_empty() { "♪" } else { l.text.as_str() };
+                    for part in wrap(text, w.saturating_sub(3)) {
+                        rows.push((i, part));
+                    }
+                    rows.push((usize::MAX, String::new()));
+                }
+                if let Some(src) = &ly.source {
+                    rows.push((usize::MAX, String::new()));
+                    rows.push((usize::MAX - 1, src.clone()));
+                }
+                let max = rows.len().saturating_sub(h);
+                // Keep the sung line a third of the way down, like the app.
+                let follow = cur.map(|c| first_row[c].saturating_sub(h / 3)).unwrap_or(0);
+                let scroll = self.lyrics_scroll.unwrap_or(follow).min(max);
+                let mut out: Vec<Vec<(String, Style)>> = Vec::with_capacity(h);
+                for (n, (i, text)) in rows.iter().enumerate().skip(scroll).take(h) {
+                    let y = inner.y + (n - scroll) as u16;
+                    out.push(match *i {
+                        usize::MAX => vec![],
+                        i if i == usize::MAX - 1 => vec![(format!(" {text}"), Style::default().fg(DIM).add_modifier(Modifier::ITALIC))],
+                        i => {
+                            self.lyric_rows.push((y, i));
+                            if Some(i) == cur {
+                                vec![("▍".into(), Style::default().fg(ACCENT)), (format!(" {text}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))]
+                            } else if cur.is_some_and(|c| i < c) {
+                                vec![(format!("  {text}"), Style::default().fg(Color::DarkGray))]
+                            } else {
+                                vec![(format!("  {text}"), Style::default().fg(DIM))]
+                            }
+                        }
+                    });
+                }
+                f.render_widget(CharLines(out), inner);
             }
         }
     }
@@ -1508,7 +1614,8 @@ const HELP: &[(&str, &str)] = &[
     ("r", "repeat off → all → one"),
     ("z", "shuffle the upcoming queue"),
     ("o", "autoplay on/off"),
-    ("v", "side pane: queue / lyrics"),
+    ("v", "side pane: queue / lyrics (synced lyrics highlight the sung line)"),
+    ("click a lyric", "jump to that line; j/k scroll, f follows again"),
     ("Tab", "focus the side pane (queue: Enter jump, d remove, J/K move, C clear)"),
     ("q", "quit (music keeps playing)"),
     ("Q", "quit and stop the music"),
@@ -1590,6 +1697,7 @@ pub async fn run() -> Result<()> {
         qscroll: 0,
         lyrics: None,
         lyrics_scroll: None,
+        lyric_rows: Vec::new(),
         input: None,
         suggestions: Vec::new(),
         scursor: None,

@@ -765,15 +765,31 @@ pub async fn run(cmd: Cmd, json_out: bool) -> Result<()> {
             let out = exec::run(&api, &ep, Some(&it)).await?;
             settle(&api, out, Some(&it), &DoOpts { to: Some(to), yes: false, title: None }, json_out, 25).await?;
         }
-        Cmd::Lyrics { target } => {
+        Cmd::Lyrics { target, timed } => {
             let it = match target {
                 Some(t) => resolve_item(&api, &t).await?,
                 None => current_item().await?,
             };
             let v = it.video_id.clone().ok_or_else(|| anyhow!("{} is not a track", it.title))?;
             match exec::lyrics(&api, &v).await? {
-                Some(l) if json_out => println!("{}", json!({ "title": it.title, "lyrics": l })),
-                Some(l) => println!("{}\n\n{l}", style().head(&it.title)),
+                Some(l) if json_out => println!("{}", json!({ "title": it.title, "lyrics": l.text, "lines": l.lines, "source": l.source })),
+                Some(l) => {
+                    println!("{}\n", style().head(&it.title));
+                    if timed && !l.lines.is_empty() {
+                        for line in &l.lines {
+                            let cs = line.start_ms / 10;
+                            println!("[{:02}:{:02}.{:02}] {}", cs / 6000, cs / 100 % 60, cs % 100, line.text);
+                        }
+                    } else {
+                        if timed {
+                            eprintln!("(no synced lyrics for this song; plain text below)");
+                        }
+                        println!("{}", l.text);
+                    }
+                    if let Some(s) = l.source.filter(|_| !l.lines.is_empty()) {
+                        println!("\n{}", style().dim(&s));
+                    }
+                }
                 None => println!("No lyrics for {}", it.title),
             }
         }

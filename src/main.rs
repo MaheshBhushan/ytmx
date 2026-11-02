@@ -123,7 +123,13 @@ pub enum Cmd {
         #[arg(long)]
         to: String,
     },
-    Lyrics { target: Option<String> },
+    /// Lyrics for a ref (default: the current track).
+    Lyrics {
+        target: Option<String>,
+        /// Print `[mm:ss.cc]` timestamps (LRC) when the song has synced lyrics.
+        #[arg(long)]
+        timed: bool,
+    },
     /// "Related" tab for a track (default: current).
     Related { target: Option<String> },
     Status,

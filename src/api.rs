@@ -163,6 +163,35 @@ impl Api {
         self.call("browse", b).await
     }
 
+    /// A browse page as the Android YouTube Music app (ANDROID_MUSIC) sees it.
+    /// Used for lyrics only: that client gets per-line timestamps
+    /// (`timedLyricsModel`) where the web client gets plain text. Sent without
+    /// the session, since lyrics are public and some accounts get HTTP 400 for
+    /// this client with cookies attached.
+    pub async fn browse_android(&self, browse_id: &str) -> Result<Value> {
+        const VERSION: &str = "7.21.50";
+        let mut client = json!({ "clientName": "ANDROID_MUSIC", "clientVersion": VERSION, "hl": self.hl });
+        if let Some(gl) = &self.gl {
+            client["gl"] = json!(gl);
+        }
+        let payload = json!({ "context": { "client": client }, "browseId": browse_id });
+        let resp = self
+            .http
+            .post(format!("{ORIGIN}/youtubei/v1/browse?prettyPrint=false"))
+            .header("x-youtube-client-name", "21")
+            .header("x-youtube-client-version", VERSION)
+            .json(&payload)
+            .send()
+            .await
+            .context("POST browse (lyrics)")?;
+        let status = resp.status();
+        let v: Value = resp.json().await.context("decoding lyrics response")?;
+        if v.get("error").is_some() {
+            bail!("lyrics: HTTP {status}");
+        }
+        Ok(v)
+    }
+
     pub async fn continuation(&self, endpoint: &str, token: &str) -> Result<Value> {
         self.call(endpoint, json!({ "continuation": token })).await
     }

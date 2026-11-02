@@ -236,11 +236,70 @@ pub async fn playlist_remove(api: &Api, playlist_id: &str, items: &[(String, Str
     Ok(())
 }
 
-/// Plain lyrics for a video via the /next lyrics tab.
-pub async fn lyrics(api: &Api, video_id: &str) -> Result<Option<String>> {
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LyricLine {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Lyrics {
+    /// Timed lines, sorted by start; empty when only plain lyrics exist.
+    pub lines: Vec<LyricLine>,
+    /// Plain text (the timed lines joined, or the web client's lyrics).
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+impl Lyrics {
+    /// Index of the line being sung at `ms`: the last one that has started.
+    pub fn current(&self, ms: u64) -> Option<usize> {
+        let i = self.lines.partition_point(|l| l.start_ms <= ms);
+        i.checked_sub(1)
+    }
+}
+
+fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+    match v {
+        Value::Object(m) => m.get(key).or_else(|| m.values().find_map(|x| find_key(x, key))),
+        Value::Array(a) => a.iter().find_map(|x| find_key(x, key)),
+        _ => None,
+    }
+}
+
+/// Lines from the Android client's `timedLyricsData` (millisecond cue ranges).
+fn timed_lines(r: &Value) -> Vec<LyricLine> {
+    let ms = |v: &Value| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64());
+    let mut lines: Vec<LyricLine> = find_key(r, "timedLyricsData")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|l| {
+            let c = &l["cueRange"];
+            let (start_ms, end_ms) = (ms(&c["startTimeMilliseconds"])?, ms(&c["endTimeMilliseconds"])?);
+            (end_ms > start_ms).then(|| LyricLine { start_ms, end_ms, text: l["lyricLine"].as_str().unwrap_or("").to_string() })
+        })
+        .collect();
+    lines.sort_by_key(|l| l.start_ms);
+    lines
+}
+
+/// Lyrics for a video: timed lines when YouTube Music has them (as the mobile
+/// app shows them), else the web client's plain text.
+pub async fn lyrics(api: &Api, video_id: &str) -> Result<Option<Lyrics>> {
     let n = model::parse_next(&api.next(json!({ "videoId": video_id })).await?);
     let Some(ep) = n.lyrics else { return Ok(None) };
-    let id = ep.pointer("/browseEndpoint/browseId").and_then(Value::as_str).unwrap_or_default();
-    let page = model::parse_page(&api.browse(id, None).await?);
-    Ok(page.sections.into_iter().find_map(|s| s.text))
+    let id = ep.pointer("/browseEndpoint/browseId").and_then(Value::as_str).unwrap_or_default().to_string();
+    if let Ok(r) = api.browse_android(&id).await {
+        let lines = timed_lines(&r);
+        if !lines.is_empty() {
+            let source = find_key(&r, "sourceMessage").and_then(Value::as_str).map(String::from);
+            let text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+            return Ok(Some(Lyrics { lines, text, source }));
+        }
+    }
+    let page = model::parse_page(&api.browse(&id, None).await?);
+    Ok(page.sections.into_iter().find_map(|s| s.text).map(|text| Lyrics { text, ..Default::default() }))
 }

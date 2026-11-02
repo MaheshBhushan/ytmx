@@ -102,7 +102,7 @@ Run `ytmx` with no arguments.
 | `←` `→` (`⇧`) | Seek 5 s (30 s); click the progress bar to seek |
 | `+` `-` / `0` | Volume / mute. This is the system output volume (PipeWire/PulseAudio), so it matches the tray and media keys, and changes made there show up in ytmx immediately |
 | `r` `z` `o` | Repeat off/all/one, shuffle upcoming, autoplay on/off |
-| `v` | Side pane: queue / lyrics |
+| `v` | Side pane: queue / lyrics. Synced lyrics highlight the line being sung and scroll with the song; click a line to jump there, `j`/`k` (with the pane focused) scroll, `f` follows again |
 | `Tab` | Focus the side pane; in the queue `Enter` jumps, `d` removes, `J`/`K` move, `C` clears |
 | `q` / `Q` | Quit (music keeps playing) / quit and stop the music |
 
@@ -134,7 +134,7 @@ ytmx add 5 6 --next                   # queue (or play next)
 ytmx radio [ref]
 ytmx like|dislike|unlike [ref]        # default: what's playing
 ytmx save [ref] --to "My playlist"
-ytmx lyrics [ref]
+ytmx lyrics [ref] [--timed]          # --timed prints [mm:ss.cc] lines (LRC) when the song has synced lyrics
 ytmx related [ref]
 ytmx subscribe|unsubscribe <artist ref>
 
@@ -216,7 +216,7 @@ Notes from the capture: toggle menu items carry both sides plus `isToggled`; sub
 ## Limits
 
 - Things the web app does through its own dialogs (report a song, edit a playlist thumbnail) aren't implemented.
-- Lyrics come from the web client's lyrics tab, which has no timestamps; the lyrics pane scrolls with playback proportionally.
+- Synced lyrics come from the YouTube Music Android client's lyrics (per-line timing from LyricFind/Musixmatch), fetched without your cookies. Songs without timing fall back to the web lyrics, which scroll with playback proportionally.
 - Uploading music is not implemented.
 
 ## Files
