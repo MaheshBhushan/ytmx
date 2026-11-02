@@ -51,6 +51,13 @@ jobs:
         run: |
           set -x
           B=target/release/ytmx
+          if [ "$RUNNER_OS" = Windows ]; then
+            d=/c/ProgramData/chocolatey/lib/mpvio.install/tools
+            ls "$d" | head -20
+            echo "$PATH" | tr ':' '\n' | grep -i choco || true
+            export PATH="$d:$PATH"
+          fi
+          command -v mpv
           mpv --version > mpv.txt; sed -n 1p mpv.txt
           yt-dlp --version
           $B --version
